@@ -6,5 +6,8 @@ COPY src /build/src
 RUN python3 /build/build.py /bookmark_handoff
 
 FROM docker.io/library/python:3.15-alpine@sha256:d44b1254cb92329418d164b22b20d86bbd3869d48e80e09e476531a409a728bb
+# Nothing installs at run time, and pip's vendored urllib3 and msgpack would fail the scan
+# gate.
+RUN python3 -m pip uninstall -y pip
 COPY --from=build /bookmark_handoff /usr/local/bin/bookmark_handoff
 ENTRYPOINT ["python3", "/usr/local/bin/bookmark_handoff"]
