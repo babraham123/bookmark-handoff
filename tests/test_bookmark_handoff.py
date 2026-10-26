@@ -1,19 +1,28 @@
 """Each handoff against in-memory fakes of the linkding and Readeck APIs and a temp
-directory for the inboxes and state. No live services."""
+directory for the inboxes and state. No live services. The command line runs from the
+zipapp build.py makes."""
 
 import copy
 import io
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
 import urllib.parse
+import urllib.request
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import bookmark_handoff as bh  # noqa: E402
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))
+
+import build  # noqa: E402
+from bookmark_handoff import cli, config, narrate, toread, video  # noqa: E402
+from bookmark_handoff.app import App  # noqa: E402
 
 
 class FakeLinkding:
@@ -109,7 +118,7 @@ class HandoffTest(unittest.TestCase):
     self.enterContext(redirect_stderr(io.StringIO()))
 
   def cfg(self, **env):
-    return bh.Config.from_env({**self.environ, **env})
+    return config.Config.from_env({**self.environ, **env})
 
   def inbox(self, kind):
     return sorted(p.name for p in (self.books / kind / "inbox").iterdir())
@@ -126,7 +135,7 @@ class LinkdingToReadeckTest(HandoffTest):
     )
     readeck = FakeReadeck()
 
-    self.assertEqual(bh.linkding_to_readeck(self.cfg(), linkding, readeck), (0, 2))
+    self.assertEqual(toread.linkding_to_readeck(self.cfg(), linkding, readeck), (0, 2))
 
     self.assertEqual(
       readeck.posted,
@@ -147,7 +156,7 @@ class LinkdingToReadeckTest(HandoffTest):
     linkding = FakeLinkding(bookmarks, page_size=2)
     readeck = FakeReadeck()
 
-    self.assertEqual(bh.linkding_to_readeck(self.cfg(), linkding, readeck), (0, 5))
+    self.assertEqual(toread.linkding_to_readeck(self.cfg(), linkding, readeck), (0, 5))
     self.assertEqual(len(readeck.posted), 5)
     for i in range(1, 6):
       self.assertEqual(linkding.tags(i), ["readeck"])
@@ -156,7 +165,7 @@ class LinkdingToReadeckTest(HandoffTest):
     linkding = FakeLinkding([{"id": 1, "url": "https://a.example/1", "tag_names": ["toread"]}])
 
     self.assertEqual(
-      bh.linkding_to_readeck(self.cfg(), linkding, FakeReadeck(fail_post=True)), (1, 1)
+      toread.linkding_to_readeck(self.cfg(), linkding, FakeReadeck(fail_post=True)), (1, 1)
     )
     self.assertEqual(linkding.tags(1), ["toread"])
     self.assertEqual((self.root / "state/sent").read_text(), "")
@@ -164,11 +173,11 @@ class LinkdingToReadeckTest(HandoffTest):
   def test_failed_retag_is_retried_without_saving_twice(self):
     bookmark = {"id": 7, "url": "https://a.example/7", "tag_names": ["toread"]}
     linkding, readeck = FakeLinkding([bookmark], fail_patch={7}), FakeReadeck()
-    self.assertEqual(bh.linkding_to_readeck(self.cfg(), linkding, readeck), (1, 1))
+    self.assertEqual(toread.linkding_to_readeck(self.cfg(), linkding, readeck), (1, 1))
     self.assertEqual(linkding.tags(7), ["toread"])
 
     linkding.fail_patch.clear()
-    self.assertEqual(bh.linkding_to_readeck(self.cfg(), linkding, readeck), (0, 1))
+    self.assertEqual(toread.linkding_to_readeck(self.cfg(), linkding, readeck), (0, 1))
     self.assertEqual(len(readeck.posted), 1)
     self.assertEqual(linkding.tags(7), ["readeck"])
 
@@ -179,7 +188,7 @@ class LinkdingToReadeckTest(HandoffTest):
     readeck = FakeReadeck()
     cfg = self.cfg(TOREAD_TAG="later", READECK_TAG="in-readeck")
 
-    self.assertEqual(bh.linkding_to_readeck(cfg, linkding, readeck), (0, 1))
+    self.assertEqual(toread.linkding_to_readeck(cfg, linkding, readeck), (0, 1))
     self.assertEqual(readeck.posted[0]["labels"], ["toread"])
     self.assertEqual(linkding.tags(1), ["toread", "in-readeck"])
 
@@ -193,7 +202,7 @@ class ReadeckToNarrateTest(HandoffTest):
       ]
     )
 
-    self.assertEqual(bh.readeck_to_narrate(self.cfg(), readeck), (0, 1))
+    self.assertEqual(narrate.readeck_to_narrate(self.cfg(), readeck), (0, 1))
 
     name = "A-Long-Read-Part-1-abc"
     inbox = self.books / "narrate/inbox"
@@ -207,44 +216,46 @@ class ReadeckToNarrateTest(HandoffTest):
 
   def test_every_page_is_read_before_relabelling(self):
     readeck = FakeReadeck([{"id": f"a{i}", "title": "t", "labels": ["listen"]} for i in range(120)])
-    self.assertEqual(bh.readeck_to_narrate(self.cfg(), readeck), (0, 120))
+    self.assertEqual(narrate.readeck_to_narrate(self.cfg(), readeck), (0, 120))
     self.assertEqual(len(self.inbox("narrate")), 240)
 
   def test_missing_inbox_skips_the_job(self):
     (self.books / "narrate/inbox").rmdir()
     readeck = FakeReadeck([{"id": "abc", "title": "t", "labels": ["listen"]}])
 
-    self.assertEqual(bh.readeck_to_narrate(self.cfg(), readeck), (0, 0))
+    self.assertEqual(narrate.readeck_to_narrate(self.cfg(), readeck), (0, 0))
     self.assertEqual(readeck.labels("abc"), ["listen"])
 
   def test_already_narrated_article_is_only_relabelled(self):
     (self.books / "readalouds/articles/T-abc").mkdir(parents=True)
     readeck = FakeReadeck([{"id": "abc", "title": "T", "labels": ["listen"]}], fail_export={"abc"})
 
-    self.assertEqual(bh.readeck_to_narrate(self.cfg(), readeck), (0, 1))
+    self.assertEqual(narrate.readeck_to_narrate(self.cfg(), readeck), (0, 1))
     self.assertEqual(self.inbox("narrate"), [])
     self.assertEqual(readeck.labels("abc"), ["narrated"])
 
   def test_failed_export_leaves_no_partial_file_and_keeps_the_label(self):
     readeck = FakeReadeck([{"id": "abc", "title": "T", "labels": ["listen"]}], fail_export={"abc"})
 
-    self.assertEqual(bh.readeck_to_narrate(self.cfg(), readeck), (1, 1))
+    self.assertEqual(narrate.readeck_to_narrate(self.cfg(), readeck), (1, 1))
     self.assertEqual(self.inbox("narrate"), [])
     self.assertEqual(readeck.labels("abc"), ["listen"])
 
   def test_paths_collection_and_labels_come_from_the_environment(self):
-    narrate = self.root / "elsewhere"
-    (narrate / "inbox").mkdir(parents=True)
+    narrate_dir = self.root / "elsewhere"
+    (narrate_dir / "inbox").mkdir(parents=True)
     readeck = FakeReadeck([{"id": "abc", "title": "T", "labels": ["tts"]}])
     cfg = self.cfg(
-      NARRATE_DIR=str(narrate),
+      NARRATE_DIR=str(narrate_dir),
       NARRATE_COLLECTION="essays",
       LISTEN_LABEL="tts",
       NARRATED_LABEL="spoken",
     )
 
-    self.assertEqual(bh.readeck_to_narrate(cfg, readeck), (0, 1))
-    self.assertEqual(json.loads((narrate / "inbox/T-abc.json").read_text())["collection"], "essays")
+    self.assertEqual(narrate.readeck_to_narrate(cfg, readeck), (0, 1))
+    self.assertEqual(
+      json.loads((narrate_dir / "inbox/T-abc.json").read_text())["collection"], "essays"
+    )
     self.assertEqual(readeck.labels("abc"), ["spoken"])
 
   def test_narration_lang(self):
@@ -261,7 +272,7 @@ class ReadeckToNarrateTest(HandoffTest):
       ("not a tag!", "en"),
     ]:
       with self.subTest(tag=tag):
-        self.assertEqual(bh.narration_lang(tag), lang)
+        self.assertEqual(narrate.narration_lang(tag), lang)
 
 
 class LinkdingToVideoTest(HandoffTest):
@@ -279,7 +290,7 @@ class LinkdingToVideoTest(HandoffTest):
       ]
     )
 
-    self.assertEqual(bh.linkding_to_video(self.cfg(), linkding), (0, 2))
+    self.assertEqual(video.linkding_to_video(self.cfg(), linkding), (0, 2))
 
     inbox = self.books / "videos/inbox"
     self.assertEqual(self.inbox("videos"), ["A-Talk-4.json", "Plain-5.json"])
@@ -300,7 +311,7 @@ class LinkdingToVideoTest(HandoffTest):
       [{"id": 4, "url": "https://youtu.be/x", "title": "V", "tag_names": ["tolisten"]}]
     )
 
-    self.assertEqual(bh.linkding_to_video(self.cfg(), linkding), (0, 1))
+    self.assertEqual(video.linkding_to_video(self.cfg(), linkding), (0, 1))
     self.assertEqual(self.inbox("videos"), [])
     self.assertEqual(linkding.tags(4), ["transcribed"])
 
@@ -310,7 +321,7 @@ class LinkdingToVideoTest(HandoffTest):
       fail_patch={4},
     )
 
-    self.assertEqual(bh.linkding_to_video(self.cfg(), linkding), (1, 1))
+    self.assertEqual(video.linkding_to_video(self.cfg(), linkding), (1, 1))
     self.assertEqual(self.inbox("videos"), ["V-4.json"])
     self.assertEqual(linkding.tags(4), ["tolisten"])
 
@@ -318,7 +329,7 @@ class LinkdingToVideoTest(HandoffTest):
     (self.books / "videos/inbox").rmdir()
     linkding = FakeLinkding([{"id": 4, "url": "https://youtu.be/x", "tag_names": ["tolisten"]}])
 
-    self.assertEqual(bh.linkding_to_video(self.cfg(), linkding), (0, 0))
+    self.assertEqual(video.linkding_to_video(self.cfg(), linkding), (0, 0))
     self.assertEqual(linkding.tags(4), ["tolisten"])
 
 
@@ -333,14 +344,14 @@ APPS = {
 class RunTest(HandoffTest):
   def run_with(self, environ, linkding=None, readeck=None):
     """run() with the apps NAME_URL configures replaced by the fakes."""
-    real = bh.App.from_env
+    real = App.from_env
 
     def from_env(env, name, scheme):
       app = real(env, name, scheme)
       return app and {"LINKDING": linkding, "READECK": readeck}[name]
 
-    with mock.patch.object(bh.App, "from_env", side_effect=from_env):
-      return bh.run({**self.environ, **environ})
+    with mock.patch.object(App, "from_env", side_effect=from_env):
+      return cli.run({**self.environ, **environ})
 
   def test_one_app_down_does_not_hold_up_the_others(self):
     linkding = FakeLinkding([], down=True)
@@ -372,16 +383,12 @@ class RunTest(HandoffTest):
     self.assertEqual(linkding.tags(2), ["transcribed"])
 
   def test_url_without_token_is_a_config_error(self):
-    with self.assertRaisesRegex(bh.ConfigError, "READECK_API_TOKEN"):
-      bh.run({**self.environ, "READECK_URL": "http://readeck:8000"})
+    with self.assertRaisesRegex(config.ConfigError, "READECK_API_TOKEN"):
+      cli.run({**self.environ, "READECK_URL": "http://readeck:8000"})
 
   def test_main_exits_nonzero_on_errors(self):
-    with (
-      mock.patch.dict(bh.os.environ, {"READECK_URL": "http://readeck:8000"}, clear=True),
-      self.assertRaises(SystemExit) as exit,
-    ):
-      bh.main()
-    self.assertEqual(exit.exception.code, 1)
+    with mock.patch.dict(cli.os.environ, {"READECK_URL": "http://readeck:8000"}, clear=True):
+      self.assertEqual(cli.main([]), 1)
 
 
 class AppTest(unittest.TestCase):
@@ -399,12 +406,12 @@ class AppTest(unittest.TestCase):
       sent.append(request)
       return Response(response)
 
-    with mock.patch.object(bh.urllib.request, "urlopen", side_effect=urlopen):
+    with mock.patch.object(urllib.request, "urlopen", side_effect=urlopen):
       result = app.request(*args, **kwargs)
     return sent[0], result
 
   def test_absolute_url_is_sent_to_the_configured_address_and_host(self):
-    app = bh.App.from_env(
+    app = App.from_env(
       {
         "LINKDING_URL": "http://10.0.0.17:9090/",
         "LINKDING_API_TOKEN": " t0k \n",
@@ -428,7 +435,7 @@ class AppTest(unittest.TestCase):
     self.assertIsNone(request.data)
 
   def test_json_body_and_no_host_override_by_default(self):
-    app = bh.App("http://readeck:8000", "abc", "Bearer")
+    app = App("http://readeck:8000", "abc", "Bearer")
 
     request, result = self.request(
       app, "PATCH", "/api/bookmarks/x", {"add_labels": ["a"]}, response=b""
@@ -443,9 +450,45 @@ class AppTest(unittest.TestCase):
 
   def test_raw_returns_bytes(self):
     _, result = self.request(
-      bh.App("http://r", "t", "Bearer"), "GET", "/x.epub", raw=True, response=b"PK\x03\x04"
+      App("http://r", "t", "Bearer"), "GET", "/x.epub", raw=True, response=b"PK\x03\x04"
     )
     self.assertEqual(result, b"PK\x03\x04")
+
+
+class ZipappTest(unittest.TestCase):
+  @classmethod
+  def setUpClass(cls):
+    tmp = tempfile.mkdtemp()
+    cls.addClassCleanup(shutil.rmtree, tmp)
+    cls.root = Path(tmp)
+    cls.zipapp = build.build(cls.root / "bookmark_handoff")
+
+  def test_help(self):
+    p = subprocess.run([str(self.zipapp), "--help"], capture_output=True, text=True)
+    self.assertEqual(p.returncode, 0, p.stderr)
+    self.assertIn("usage: bookmark_handoff", p.stdout)
+
+  def test_a_run_without_apps_skips_every_job(self):
+    environ = {"BOOKS_DIR": str(self.root / "books"), "STATE_DIR": str(self.root / "state")}
+    p = subprocess.run([str(self.zipapp)], capture_output=True, text=True, env=environ)
+    self.assertEqual(p.returncode, 0, p.stderr)
+    self.assertEqual(p.stdout.count("skipped"), 3)
+
+  def test_langcodes_is_vendored(self):
+    # -S leaves out site-packages, so langcodes can only come from the zipapp.
+    code = "from bookmark_handoff.narrate import narration_lang; print(narration_lang('nn-NO'))"
+    p = subprocess.run(
+      [
+        sys.executable,
+        "-I",
+        "-S",
+        "-c",
+        f"import sys; sys.path.insert(0, {str(self.zipapp)!r}); {code}",
+      ],
+      capture_output=True,
+      text=True,
+    )
+    self.assertEqual((p.returncode, p.stdout), (0, "no\n"), p.stderr)
 
 
 if __name__ == "__main__":
