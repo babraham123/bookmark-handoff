@@ -248,11 +248,18 @@ class ReadeckToNarrateTest(HandoffTest):
     self.assertEqual(readeck.labels("abc"), ["spoken"])
 
   def test_narration_lang(self):
-    # fmt: off
-    cases = [("en_US", "en"), ("eng", "en"), ("EN", "en"), ("fr-CA", "fr"), ("nb", "no"),
-             ("nn-NO", "no"), ("vi", "en"), ("", "en"), (None, "en"), ("not a tag!", "en")]
-    # fmt: on
-    for tag, lang in cases:
+    for tag, lang in [
+      ("en_US", "en"),
+      ("eng", "en"),
+      ("EN", "en"),
+      ("fr-CA", "fr"),
+      ("nb", "no"),
+      ("nn-NO", "no"),
+      ("vi", "en"),
+      ("", "en"),
+      (None, "en"),
+      ("not a tag!", "en"),
+    ]:
       with self.subTest(tag=tag):
         self.assertEqual(bh.narration_lang(tag), lang)
 

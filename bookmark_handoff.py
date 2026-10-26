@@ -25,10 +25,31 @@ import langcodes
 
 # Chatterbox Multilingual's languages, the TTS behind Calliope; anything else is read
 # as English. Ref: https://github.com/resemble-ai/chatterbox
-# fmt: off
-narrated_langs = {"ar", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "it", "ja",
-                  "ko", "ms", "nl", "no", "pl", "pt", "ru", "sv", "sw", "tr", "zh"}
-# fmt: on
+narrated_langs = {
+  "ar",
+  "da",
+  "de",
+  "el",
+  "en",
+  "es",
+  "fi",
+  "fr",
+  "he",
+  "hi",
+  "it",
+  "ja",
+  "ko",
+  "ms",
+  "nl",
+  "no",
+  "pl",
+  "pt",
+  "ru",
+  "sv",
+  "sw",
+  "tr",
+  "zh",
+}
 
 
 def log(message):
