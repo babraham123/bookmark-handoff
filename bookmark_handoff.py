@@ -25,8 +25,10 @@ import langcodes
 
 # Chatterbox Multilingual's languages, the TTS behind Calliope; anything else is read
 # as English. Ref: https://github.com/resemble-ai/chatterbox
+# fmt: off
 narrated_langs = {"ar", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "it", "ja",
                   "ko", "ms", "nl", "no", "pl", "pt", "ru", "sv", "sw", "tr", "zh"}
+# fmt: on
 
 
 def log(message):
@@ -64,18 +66,19 @@ class Config:
   def from_env(cls, environ):
     books = Path(env(environ, "BOOKS_DIR", "/books"))
     return cls(
-        toread_tag=env(environ, "TOREAD_TAG", "toread"),
-        readeck_tag=env(environ, "READECK_TAG", "readeck"),
-        listen_label=env(environ, "LISTEN_LABEL", "listen"),
-        narrated_label=env(environ, "NARRATED_LABEL", "narrated"),
-        tolisten_tag=env(environ, "TOLISTEN_TAG", "tolisten"),
-        transcribed_tag=env(environ, "TRANSCRIBED_TAG", "transcribed"),
-        narrate_dir=Path(env(environ, "NARRATE_DIR", books / "narrate")),
-        narrate_collection=env(environ, "NARRATE_COLLECTION", "articles"),
-        videos_dir=Path(env(environ, "VIDEOS_DIR", books / "videos")),
-        video_collection=env(environ, "VIDEO_COLLECTION", "videos"),
-        readalouds_dir=Path(env(environ, "READALOUDS_DIR", books / "readalouds")),
-        state_dir=Path(env(environ, "STATE_DIR", "/state")))
+      toread_tag=env(environ, "TOREAD_TAG", "toread"),
+      readeck_tag=env(environ, "READECK_TAG", "readeck"),
+      listen_label=env(environ, "LISTEN_LABEL", "listen"),
+      narrated_label=env(environ, "NARRATED_LABEL", "narrated"),
+      tolisten_tag=env(environ, "TOLISTEN_TAG", "tolisten"),
+      transcribed_tag=env(environ, "TRANSCRIBED_TAG", "transcribed"),
+      narrate_dir=Path(env(environ, "NARRATE_DIR", books / "narrate")),
+      narrate_collection=env(environ, "NARRATE_COLLECTION", "articles"),
+      videos_dir=Path(env(environ, "VIDEOS_DIR", books / "videos")),
+      video_collection=env(environ, "VIDEO_COLLECTION", "videos"),
+      readalouds_dir=Path(env(environ, "READALOUDS_DIR", books / "readalouds")),
+      state_dir=Path(env(environ, "STATE_DIR", "/state")),
+    )
 
 
 class App:
@@ -109,8 +112,11 @@ class App:
     if body is not None:
       headers["Content-Type"] = "application/json"
     request = urllib.request.Request(
-        self.url + path, method=method,
-        data=None if body is None else json.dumps(body).encode(), headers=headers)
+      self.url + path,
+      method=method,
+      data=None if body is None else json.dumps(body).encode(),
+      headers=headers,
+    )
     with urllib.request.urlopen(request, timeout=60) as response:
       data = response.read()
     return data if raw else json.loads(data or "null")
@@ -173,10 +179,11 @@ def linkding_to_readeck(cfg, linkding, readeck):
       with sent.open("a") as f:
         f.write(f"{ld_id}\n")
     try:
-      linkding.request("PATCH", f"/api/bookmarks/{ld_id}/",
-                       {"tag_names": tags + [cfg.readeck_tag]})
+      linkding.request("PATCH", f"/api/bookmarks/{ld_id}/", {"tag_names": tags + [cfg.readeck_tag]})
     except OSError as e:
-      warn(f"{link} is in Readeck, but retagging linkding {ld_id} failed: {e}; the next run retries it")
+      warn(
+        f"{link} is in Readeck, but retagging linkding {ld_id} failed: {e}; the next run retries it"
+      )
       failed += 1
       continue
     log(f"handed off {link} (linkding {ld_id})")
@@ -193,7 +200,8 @@ def readeck_to_narrate(cfg, readeck):
   articles, limit = [], 50
   while True:
     query = urllib.parse.urlencode(
-        {"labels": cfg.listen_label, "limit": limit, "offset": len(articles)})
+      {"labels": cfg.listen_label, "limit": limit, "offset": len(articles)}
+    )
     page = readeck.request("GET", f"/api/bookmarks?{query}")
     articles += page
     if len(page) < limit:
@@ -203,8 +211,12 @@ def readeck_to_narrate(cfg, readeck):
   for article in articles:
     name, rd_id = slug(article), article["id"]
     # Already queued, narrated or failed by an earlier run whose relabel failed.
-    done = [inbox / f"{name}.epub", cfg.readalouds_dir / cfg.narrate_collection / name,
-            cfg.narrate_dir / "failed" / name, cfg.narrate_dir / "failed" / f"{name}.epub"]
+    done = [
+      inbox / f"{name}.epub",
+      cfg.readalouds_dir / cfg.narrate_collection / name,
+      cfg.narrate_dir / "failed" / name,
+      cfg.narrate_dir / "failed" / f"{name}.epub",
+    ]
     if any(p.exists() for p in done):
       log(f"{name} is already queued or done; relabelling only")
     else:
@@ -215,16 +227,24 @@ def readeck_to_narrate(cfg, readeck):
         epub.write_bytes(readeck.request("GET", f"/api/bookmarks/{rd_id}/article.epub", raw=True))
       except OSError as e:
         epub.unlink(missing_ok=True)
-        warn(f"exporting {rd_id} ({article.get('title')}) failed: {e}; left labelled {cfg.listen_label}")
+        warn(
+          f"exporting {rd_id} ({article.get('title')}) failed: {e}; left labelled {cfg.listen_label}"
+        )
         failed += 1
         continue
-      spec.write_text(json.dumps({"lang": narration_lang(article.get("lang")),
-                                  "collection": cfg.narrate_collection}))
+      spec.write_text(
+        json.dumps(
+          {"lang": narration_lang(article.get("lang")), "collection": cfg.narrate_collection}
+        )
+      )
       spec.rename(inbox / f"{name}.json")
       epub.rename(inbox / f"{name}.epub")
     try:
-      readeck.request("PATCH", f"/api/bookmarks/{rd_id}",
-                      {"remove_labels": [cfg.listen_label], "add_labels": [cfg.narrated_label]})
+      readeck.request(
+        "PATCH",
+        f"/api/bookmarks/{rd_id}",
+        {"remove_labels": [cfg.listen_label], "add_labels": [cfg.narrated_label]},
+      )
     except OSError as e:
       warn(f"{name} is queued, but relabelling {rd_id} failed: {e}; the next run retries it")
       failed += 1
@@ -248,14 +268,19 @@ def linkding_to_video(cfg, linkding):
     name = slug({"title": title, "id": ld_id})
     tags = [t for t in bookmark["tag_names"] if t != cfg.tolisten_tag]
     # Already queued, transcribed or failed by an earlier run whose retag failed.
-    done = [video_inbox / f"{name}.json", cfg.readalouds_dir / cfg.video_collection / name,
-            cfg.videos_dir / "failed" / name]
+    done = [
+      video_inbox / f"{name}.json",
+      cfg.readalouds_dir / cfg.video_collection / name,
+      cfg.videos_dir / "failed" / name,
+    ]
     if any(p.exists() for p in done):
       log(f"{name} is already queued or done; retagging only")
     else:
       request = {"url": link, "title": title, "linkding_id": ld_id}
-      lang = next((t.split(":", 1)[1].lower() for t in tags
-                   if t.lower().startswith("lang:") and len(t) > 5), None)
+      lang = next(
+        (t.split(":", 1)[1].lower() for t in tags if t.lower().startswith("lang:") and len(t) > 5),
+        None,
+      )
       if lang:
         request["lang"] = lang
       # A hidden temp name doesn't match the transcriber's *.json watch, so it never sees
@@ -270,8 +295,9 @@ def linkding_to_video(cfg, linkding):
         failed += 1
         continue
     try:
-      linkding.request("PATCH", f"/api/bookmarks/{ld_id}/",
-                       {"tag_names": tags + [cfg.transcribed_tag]})
+      linkding.request(
+        "PATCH", f"/api/bookmarks/{ld_id}/", {"tag_names": tags + [cfg.transcribed_tag]}
+      )
     except OSError as e:
       warn(f"{name} is queued, but retagging linkding {ld_id} failed: {e}; the next run retries it")
       failed += 1
@@ -285,10 +311,15 @@ def run(environ):
   cfg = Config.from_env(environ)
   linkding = App.from_env(environ, "LINKDING", "Token")
   readeck = App.from_env(environ, "READECK", "Bearer")
-  jobs = [("linkding to Readeck", (linkding, readeck),
-           lambda: linkding_to_readeck(cfg, linkding, readeck)),
-          ("Readeck to narration", (readeck,), lambda: readeck_to_narrate(cfg, readeck)),
-          ("linkding to video", (linkding,), lambda: linkding_to_video(cfg, linkding))]
+  jobs = [
+    (
+      "linkding to Readeck",
+      (linkding, readeck),
+      lambda: linkding_to_readeck(cfg, linkding, readeck),
+    ),
+    ("Readeck to narration", (readeck,), lambda: readeck_to_narrate(cfg, readeck)),
+    ("linkding to video", (linkding,), lambda: linkding_to_video(cfg, linkding)),
+  ]
   errors = []
   # Each job runs whatever the others did: one app being down shouldn't hold up the rest.
   for job, apps, handoff in jobs:

@@ -36,7 +36,9 @@ class FakeLinkding:
       # linkding's `next` is an absolute URL on its public host name.
       next_url = None
       if end < len(matches):
-        next_query = urllib.parse.urlencode({"q": f"#{tag}", "limit": self.page_size, "offset": end})
+        next_query = urllib.parse.urlencode(
+          {"q": f"#{tag}", "limit": self.page_size, "offset": end}
+        )
         next_url = f"https://archive.example.com/api/bookmarks/?{next_query}"
       return {"results": copy.deepcopy(matches[offset:end]), "next": next_url}
     if method == "PATCH":
@@ -72,7 +74,7 @@ class FakeReadeck:
       label = query["labels"][0]
       limit, offset = int(query["limit"][0]), int(query["offset"][0])
       matches = [a for a in self.articles.values() if label in a["labels"]]
-      return copy.deepcopy(matches[offset:offset + limit])
+      return copy.deepcopy(matches[offset : offset + limit])
     if method == "GET" and parts.path.endswith("/article.epub"):
       rd_id = parts.path.split("/")[3]
       if rd_id in self.fail_export:
@@ -115,25 +117,33 @@ class HandoffTest(unittest.TestCase):
 
 class LinkdingToReadeckTest(HandoffTest):
   def test_toread_bookmark_moves_to_readeck_and_is_retagged(self):
-    linkding = FakeLinkding([
+    linkding = FakeLinkding(
+      [
         {"id": 1, "url": "https://a.example/1", "title": "One", "tag_names": ["toread", "news"]},
         {"id": 2, "url": "https://a.example/2", "title": "", "tag_names": ["toread"]},
-        {"id": 3, "url": "https://a.example/3", "title": "Other", "tag_names": ["news"]}])
+        {"id": 3, "url": "https://a.example/3", "title": "Other", "tag_names": ["news"]},
+      ]
+    )
     readeck = FakeReadeck()
 
     self.assertEqual(bh.linkding_to_readeck(self.cfg(), linkding, readeck), (0, 2))
 
-    self.assertEqual(readeck.posted, [
+    self.assertEqual(
+      readeck.posted,
+      [
         {"url": "https://a.example/1", "labels": ["news"], "title": "One"},
-        {"url": "https://a.example/2", "labels": []}])
+        {"url": "https://a.example/2", "labels": []},
+      ],
+    )
     self.assertEqual(linkding.tags(1), ["news", "readeck"])
     self.assertEqual(linkding.tags(2), ["readeck"])
     self.assertEqual(linkding.tags(3), ["news"])
     self.assertEqual((self.root / "state/sent").read_text().split(), ["1", "2"])
 
   def test_every_page_is_read_before_retagging(self):
-    bookmarks = [{"id": i, "url": f"https://a.example/{i}", "tag_names": ["toread"]}
-                 for i in range(1, 6)]
+    bookmarks = [
+      {"id": i, "url": f"https://a.example/{i}", "tag_names": ["toread"]} for i in range(1, 6)
+    ]
     linkding = FakeLinkding(bookmarks, page_size=2)
     readeck = FakeReadeck()
 
@@ -145,7 +155,9 @@ class LinkdingToReadeckTest(HandoffTest):
   def test_refused_bookmark_stays_toread(self):
     linkding = FakeLinkding([{"id": 1, "url": "https://a.example/1", "tag_names": ["toread"]}])
 
-    self.assertEqual(bh.linkding_to_readeck(self.cfg(), linkding, FakeReadeck(fail_post=True)), (1, 1))
+    self.assertEqual(
+      bh.linkding_to_readeck(self.cfg(), linkding, FakeReadeck(fail_post=True)), (1, 1)
+    )
     self.assertEqual(linkding.tags(1), ["toread"])
     self.assertEqual((self.root / "state/sent").read_text(), "")
 
@@ -161,7 +173,9 @@ class LinkdingToReadeckTest(HandoffTest):
     self.assertEqual(linkding.tags(7), ["readeck"])
 
   def test_tag_names_come_from_the_environment(self):
-    linkding = FakeLinkding([{"id": 1, "url": "https://a.example/1", "tag_names": ["later", "toread"]}])
+    linkding = FakeLinkding(
+      [{"id": 1, "url": "https://a.example/1", "tag_names": ["later", "toread"]}]
+    )
     readeck = FakeReadeck()
     cfg = self.cfg(TOREAD_TAG="later", READECK_TAG="in-readeck")
 
@@ -172,9 +186,12 @@ class LinkdingToReadeckTest(HandoffTest):
 
 class ReadeckToNarrateTest(HandoffTest):
   def test_listen_article_lands_in_the_inbox_with_its_spec(self):
-    readeck = FakeReadeck([
+    readeck = FakeReadeck(
+      [
         {"id": "abc", "title": "A Long Read: Part 1", "lang": "de-AT", "labels": ["listen", "x"]},
-        {"id": "def", "title": "Other", "lang": "en", "labels": ["x"]}])
+        {"id": "def", "title": "Other", "lang": "en", "labels": ["x"]},
+      ]
+    )
 
     self.assertEqual(bh.readeck_to_narrate(self.cfg(), readeck), (0, 1))
 
@@ -182,8 +199,9 @@ class ReadeckToNarrateTest(HandoffTest):
     inbox = self.books / "narrate/inbox"
     self.assertEqual(self.inbox("narrate"), [f"{name}.epub", f"{name}.json"])
     self.assertEqual((inbox / f"{name}.epub").read_bytes(), b"epub of abc")
-    self.assertEqual(json.loads((inbox / f"{name}.json").read_text()),
-                     {"lang": "de", "collection": "articles"})
+    self.assertEqual(
+      json.loads((inbox / f"{name}.json").read_text()), {"lang": "de", "collection": "articles"}
+    )
     self.assertEqual(readeck.labels("abc"), ["x", "narrated"])
     self.assertEqual(readeck.labels("def"), ["x"])
 
@@ -218,50 +236,72 @@ class ReadeckToNarrateTest(HandoffTest):
     narrate = self.root / "elsewhere"
     (narrate / "inbox").mkdir(parents=True)
     readeck = FakeReadeck([{"id": "abc", "title": "T", "labels": ["tts"]}])
-    cfg = self.cfg(NARRATE_DIR=str(narrate), NARRATE_COLLECTION="essays",
-                   LISTEN_LABEL="tts", NARRATED_LABEL="spoken")
+    cfg = self.cfg(
+      NARRATE_DIR=str(narrate),
+      NARRATE_COLLECTION="essays",
+      LISTEN_LABEL="tts",
+      NARRATED_LABEL="spoken",
+    )
 
     self.assertEqual(bh.readeck_to_narrate(cfg, readeck), (0, 1))
     self.assertEqual(json.loads((narrate / "inbox/T-abc.json").read_text())["collection"], "essays")
     self.assertEqual(readeck.labels("abc"), ["spoken"])
 
   def test_narration_lang(self):
-    for tag, lang in [("en_US", "en"), ("eng", "en"), ("EN", "en"), ("fr-CA", "fr"),
-                      ("nb", "no"), ("nn-NO", "no"), ("vi", "en"), ("", "en"), (None, "en"),
-                      ("not a tag!", "en")]:
+    # fmt: off
+    cases = [("en_US", "en"), ("eng", "en"), ("EN", "en"), ("fr-CA", "fr"), ("nb", "no"),
+             ("nn-NO", "no"), ("vi", "en"), ("", "en"), (None, "en"), ("not a tag!", "en")]
+    # fmt: on
+    for tag, lang in cases:
       with self.subTest(tag=tag):
         self.assertEqual(bh.narration_lang(tag), lang)
 
 
 class LinkdingToVideoTest(HandoffTest):
   def test_tolisten_bookmark_lands_in_the_video_inbox(self):
-    linkding = FakeLinkding([
-        {"id": 4, "url": "https://youtu.be/x", "title": "", "website_title": "A Talk",
-         "tag_names": ["tolisten", "lang:DE", "talks"]},
-        {"id": 5, "url": "https://youtu.be/y", "title": "Plain", "tag_names": ["tolisten"]}])
+    linkding = FakeLinkding(
+      [
+        {
+          "id": 4,
+          "url": "https://youtu.be/x",
+          "title": "",
+          "website_title": "A Talk",
+          "tag_names": ["tolisten", "lang:DE", "talks"],
+        },
+        {"id": 5, "url": "https://youtu.be/y", "title": "Plain", "tag_names": ["tolisten"]},
+      ]
+    )
 
     self.assertEqual(bh.linkding_to_video(self.cfg(), linkding), (0, 2))
 
     inbox = self.books / "videos/inbox"
     self.assertEqual(self.inbox("videos"), ["A-Talk-4.json", "Plain-5.json"])
-    self.assertEqual(json.loads((inbox / "A-Talk-4.json").read_text()),
-                     {"url": "https://youtu.be/x", "title": "A Talk", "linkding_id": 4, "lang": "de"})
-    self.assertEqual(json.loads((inbox / "Plain-5.json").read_text()),
-                     {"url": "https://youtu.be/y", "title": "Plain", "linkding_id": 5})
+    self.assertEqual(
+      json.loads((inbox / "A-Talk-4.json").read_text()),
+      {"url": "https://youtu.be/x", "title": "A Talk", "linkding_id": 4, "lang": "de"},
+    )
+    self.assertEqual(
+      json.loads((inbox / "Plain-5.json").read_text()),
+      {"url": "https://youtu.be/y", "title": "Plain", "linkding_id": 5},
+    )
     self.assertEqual(linkding.tags(4), ["lang:DE", "talks", "transcribed"])
     self.assertEqual(linkding.tags(5), ["transcribed"])
 
   def test_already_transcribed_video_is_only_retagged(self):
     (self.books / "readalouds/videos/V-4").mkdir(parents=True)
-    linkding = FakeLinkding([{"id": 4, "url": "https://youtu.be/x", "title": "V", "tag_names": ["tolisten"]}])
+    linkding = FakeLinkding(
+      [{"id": 4, "url": "https://youtu.be/x", "title": "V", "tag_names": ["tolisten"]}]
+    )
 
     self.assertEqual(bh.linkding_to_video(self.cfg(), linkding), (0, 1))
     self.assertEqual(self.inbox("videos"), [])
     self.assertEqual(linkding.tags(4), ["transcribed"])
 
   def test_failed_retag_keeps_the_request_queued(self):
-    linkding = FakeLinkding([{"id": 4, "url": "https://youtu.be/x", "title": "V", "tag_names": ["tolisten"]}],
-                            fail_patch={4})
+    linkding = FakeLinkding(
+      [{"id": 4, "url": "https://youtu.be/x", "title": "V", "tag_names": ["tolisten"]}],
+      fail_patch={4},
+    )
 
     self.assertEqual(bh.linkding_to_video(self.cfg(), linkding), (1, 1))
     self.assertEqual(self.inbox("videos"), ["V-4.json"])
@@ -275,8 +315,12 @@ class LinkdingToVideoTest(HandoffTest):
     self.assertEqual(linkding.tags(4), ["tolisten"])
 
 
-APPS = {"LINKDING_URL": "http://linkding:9090", "LINKDING_API_TOKEN": "ld",
-        "READECK_URL": "http://readeck:8000", "READECK_API_TOKEN": "rd"}
+APPS = {
+  "LINKDING_URL": "http://linkding:9090",
+  "LINKDING_API_TOKEN": "ld",
+  "READECK_URL": "http://readeck:8000",
+  "READECK_API_TOKEN": "rd",
+}
 
 
 class RunTest(HandoffTest):
@@ -287,6 +331,7 @@ class RunTest(HandoffTest):
     def from_env(env, name, scheme):
       app = real(env, name, scheme)
       return app and {"LINKDING": linkding, "READECK": readeck}[name]
+
     with mock.patch.object(bh.App, "from_env", side_effect=from_env):
       return bh.run({**self.environ, **environ})
 
@@ -296,8 +341,9 @@ class RunTest(HandoffTest):
 
     errors = self.run_with(APPS, linkding, readeck)
 
-    self.assertEqual(errors, ["linkding to Readeck: linkding is down",
-                              "linkding to video: linkding is down"])
+    self.assertEqual(
+      errors, ["linkding to Readeck: linkding is down", "linkding to video: linkding is down"]
+    )
     self.assertEqual(readeck.labels("abc"), ["narrated"])
 
   def test_failures_are_counted_per_job(self):
@@ -306,9 +352,12 @@ class RunTest(HandoffTest):
     self.assertEqual(errors, ["linkding to Readeck: 1 of 1 failed"])
 
   def test_jobs_without_their_apps_are_skipped(self):
-    linkding = FakeLinkding([
+    linkding = FakeLinkding(
+      [
         {"id": 1, "url": "https://a.example/1", "tag_names": ["toread"]},
-        {"id": 2, "url": "https://youtu.be/x", "title": "V", "tag_names": ["tolisten"]}])
+        {"id": 2, "url": "https://youtu.be/x", "title": "V", "tag_names": ["tolisten"]},
+      ]
+    )
     environ = {k: v for k, v in APPS.items() if k.startswith("LINKDING")}
 
     self.assertEqual(self.run_with(environ, linkding), [])
@@ -320,8 +369,10 @@ class RunTest(HandoffTest):
       bh.run({**self.environ, "READECK_URL": "http://readeck:8000"})
 
   def test_main_exits_nonzero_on_errors(self):
-    with (mock.patch.dict(bh.os.environ, {"READECK_URL": "http://readeck:8000"}, clear=True),
-          self.assertRaises(SystemExit) as exit):
+    with (
+      mock.patch.dict(bh.os.environ, {"READECK_URL": "http://readeck:8000"}, clear=True),
+      self.assertRaises(SystemExit) as exit,
+    ):
       bh.main()
     self.assertEqual(exit.exception.code, 1)
 
@@ -340,18 +391,30 @@ class AppTest(unittest.TestCase):
     def urlopen(request, timeout):
       sent.append(request)
       return Response(response)
+
     with mock.patch.object(bh.urllib.request, "urlopen", side_effect=urlopen):
       result = app.request(*args, **kwargs)
     return sent[0], result
 
   def test_absolute_url_is_sent_to_the_configured_address_and_host(self):
-    app = bh.App.from_env({"LINKDING_URL": "http://10.0.0.17:9090/", "LINKDING_API_TOKEN": " t0k \n",
-                           "LINKDING_HOST": "archive.example.com:9090"}, "LINKDING", "Token")
+    app = bh.App.from_env(
+      {
+        "LINKDING_URL": "http://10.0.0.17:9090/",
+        "LINKDING_API_TOKEN": " t0k \n",
+        "LINKDING_HOST": "archive.example.com:9090",
+      },
+      "LINKDING",
+      "Token",
+    )
 
-    request, result = self.request(app, "GET", "https://archive.example.com/api/bookmarks/?q=%23toread&offset=100")
+    request, result = self.request(
+      app, "GET", "https://archive.example.com/api/bookmarks/?q=%23toread&offset=100"
+    )
 
     self.assertEqual(result, {"ok": True})
-    self.assertEqual(request.full_url, "http://10.0.0.17:9090/api/bookmarks/?q=%23toread&offset=100")
+    self.assertEqual(
+      request.full_url, "http://10.0.0.17:9090/api/bookmarks/?q=%23toread&offset=100"
+    )
     self.assertEqual(request.get_method(), "GET")
     self.assertEqual(request.get_header("Host"), "archive.example.com:9090")
     self.assertEqual(request.get_header("Authorization"), "Token t0k")
@@ -360,7 +423,9 @@ class AppTest(unittest.TestCase):
   def test_json_body_and_no_host_override_by_default(self):
     app = bh.App("http://readeck:8000", "abc", "Bearer")
 
-    request, result = self.request(app, "PATCH", "/api/bookmarks/x", {"add_labels": ["a"]}, response=b"")
+    request, result = self.request(
+      app, "PATCH", "/api/bookmarks/x", {"add_labels": ["a"]}, response=b""
+    )
 
     self.assertIsNone(result)
     self.assertEqual(request.full_url, "http://readeck:8000/api/bookmarks/x")
@@ -370,8 +435,9 @@ class AppTest(unittest.TestCase):
     self.assertEqual(json.loads(request.data), {"add_labels": ["a"]})
 
   def test_raw_returns_bytes(self):
-    _, result = self.request(bh.App("http://r", "t", "Bearer"), "GET", "/x.epub", raw=True,
-                             response=b"PK\x03\x04")
+    _, result = self.request(
+      bh.App("http://r", "t", "Bearer"), "GET", "/x.epub", raw=True, response=b"PK\x03\x04"
+    )
     self.assertEqual(result, b"PK\x03\x04")
 
 
