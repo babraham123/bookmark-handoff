@@ -85,7 +85,8 @@ digits joined by `-`, cut to 60 characters, then `-` and the bookmark's id.
   a two-letter code the narrator ([Chatterbox Multilingual](https://github.com/resemble-ai/chatterbox))
   supports, or `en`.
 - **Video**: `<slug>.json` is `{"url", "title", "linkding_id", "lang"}`; `lang` is there only if
-  the bookmark has a `lang:xx` tag, which stays on the bookmark.
+  the bookmark has a `lang:xx` tag, which stays on the bookmark. Its value keeps its code and
+  takes BCP 47's case, so `lang:pt-br` becomes `pt-BR`, the key YouTube lists captions under.
 
 An item is only retagged, not queued again, once its `<slug>` is in the inbox, under
 `$READALOUDS_DIR/<collection>/`, or under the inbox's sibling `failed/`. Readeck's API can't look

@@ -58,3 +58,9 @@ def tagged(linkding, tag):
     bookmarks += page["results"]
     url = page.get("next")
   return bookmarks
+
+
+def tags_without(bookmark, tag):
+  """BOOKMARK's tags but TAG. linkding's `#tag` search ignores case, so a bookmark tagged
+  Toread is found by #toread, and must lose that tag too or every run finds it again."""
+  return [t for t in bookmark["tag_names"] if t.casefold() != tag.casefold()]

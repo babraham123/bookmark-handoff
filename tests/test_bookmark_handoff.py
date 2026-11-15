@@ -26,7 +26,8 @@ from bookmark_handoff.app import App  # noqa: E402
 
 
 class FakeLinkding:
-  """linkding's /api/bookmarks/: `#tag` search with offset paging, and PATCH of tag_names."""
+  """linkding's /api/bookmarks/: `#tag` search, which ignores case, with offset paging, and
+  PATCH of tag_names."""
 
   def __init__(self, bookmarks, page_size=100, fail_patch=(), down=False):
     self.bookmarks = {b["id"]: b for b in copy.deepcopy(bookmarks)}
@@ -40,7 +41,11 @@ class FakeLinkding:
       query = urllib.parse.parse_qs(parts.query)
       tag = query["q"][0].removeprefix("#")
       offset = int(query.get("offset", ["0"])[0])
-      matches = [b for b in self.bookmarks.values() if tag in b["tag_names"]]
+      matches = [
+        b
+        for b in self.bookmarks.values()
+        if tag.casefold() in [t.casefold() for t in b["tag_names"]]
+      ]
       end = offset + self.page_size
       # linkding's `next` is an absolute URL on its public host name.
       next_url = None
@@ -115,7 +120,7 @@ class HandoffTest(unittest.TestCase):
     self.environ = {"BOOKS_DIR": str(self.books), "STATE_DIR": str(self.root / "state")}
     # The jobs log every item; keep the test output to the results.
     self.enterContext(redirect_stdout(io.StringIO()))
-    self.enterContext(redirect_stderr(io.StringIO()))
+    self.stderr = self.enterContext(redirect_stderr(io.StringIO()))
 
   def cfg(self, **env):
     return config.Config.from_env({**self.environ, **env})
@@ -181,6 +186,33 @@ class LinkdingToReadeckTest(HandoffTest):
     self.assertEqual(len(readeck.posted), 1)
     self.assertEqual(linkding.tags(7), ["readeck"])
 
+  def test_a_mixed_case_tag_is_removed(self):
+    linkding = FakeLinkding(
+      [{"id": 1, "url": "https://a.example/1", "tag_names": ["ToRead", "news"]}]
+    )
+    readeck = FakeReadeck()
+
+    self.assertEqual(toread.linkding_to_readeck(self.cfg(), linkding, readeck), (0, 1))
+    self.assertEqual(readeck.posted, [{"url": "https://a.example/1", "labels": ["news"]}])
+    self.assertEqual(linkding.tags(1), ["news", "readeck"])
+    # Nothing left for the next run.
+    self.assertEqual(toread.linkding_to_readeck(self.cfg(), linkding, readeck), (0, 0))
+
+  def test_a_malformed_bookmark_does_not_hold_up_the_rest(self):
+    linkding = FakeLinkding(
+      [
+        {"id": 1, "tag_names": ["toread"]},
+        {"id": 2, "url": "https://a.example/2", "tag_names": ["toread"]},
+      ]
+    )
+    readeck = FakeReadeck()
+
+    self.assertEqual(toread.linkding_to_readeck(self.cfg(), linkding, readeck), (1, 2))
+    self.assertEqual(linkding.tags(1), ["toread"])
+    self.assertEqual(linkding.tags(2), ["readeck"])
+    self.assertIn("linkding bookmark 1 failed", self.stderr.getvalue())
+    self.assertIn("KeyError: 'url'", self.stderr.getvalue())
+
   def test_tag_names_come_from_the_environment(self):
     linkding = FakeLinkding(
       [{"id": 1, "url": "https://a.example/1", "tag_names": ["later", "toread"]}]
@@ -240,6 +272,21 @@ class ReadeckToNarrateTest(HandoffTest):
     self.assertEqual(narrate.readeck_to_narrate(self.cfg(), readeck), (1, 1))
     self.assertEqual(self.inbox("narrate"), [])
     self.assertEqual(readeck.labels("abc"), ["listen"])
+
+  def test_a_malformed_article_does_not_hold_up_the_rest(self):
+    readeck = FakeReadeck(
+      [
+        {"id": "bad", "title": 5, "labels": ["listen"]},
+        {"id": "abc", "title": "T", "labels": ["listen"]},
+      ]
+    )
+
+    self.assertEqual(narrate.readeck_to_narrate(self.cfg(), readeck), (1, 2))
+    self.assertEqual(readeck.labels("bad"), ["listen"])
+    self.assertEqual(readeck.labels("abc"), ["narrated"])
+    self.assertEqual(self.inbox("narrate"), ["T-abc.epub", "T-abc.json"])
+    self.assertIn("Readeck article bad failed", self.stderr.getvalue())
+    self.assertIn("Traceback", self.stderr.getvalue())
 
   def test_paths_collection_and_labels_come_from_the_environment(self):
     narrate_dir = self.root / "elsewhere"
@@ -305,6 +352,49 @@ class LinkdingToVideoTest(HandoffTest):
     self.assertEqual(linkding.tags(4), ["lang:DE", "talks", "transcribed"])
     self.assertEqual(linkding.tags(5), ["transcribed"])
 
+  def test_lang_tag_gets_bcp47_case_and_keeps_its_code(self):
+    cases = {
+      "lang:pt-br": "pt-BR",
+      "lang:ZH-HANT-tw": "zh-Hant-TW",
+      "lang:es-419": "es-419",
+      "Lang:IW": "iw",
+    }
+    linkding = FakeLinkding(
+      [
+        {"id": i, "url": f"https://youtu.be/{i}", "title": "V", "tag_names": ["tolisten", tag]}
+        for i, tag in enumerate(cases)
+      ]
+    )
+
+    self.assertEqual(video.linkding_to_video(self.cfg(), linkding), (0, len(cases)))
+    inbox = self.books / "videos/inbox"
+    for i, lang in enumerate(cases.values()):
+      with self.subTest(lang=lang):
+        self.assertEqual(json.loads((inbox / f"V-{i}.json").read_text())["lang"], lang)
+
+  def test_a_mixed_case_tag_is_removed(self):
+    linkding = FakeLinkding(
+      [{"id": 4, "url": "https://youtu.be/x", "title": "V", "tag_names": ["ToListen", "talks"]}]
+    )
+
+    self.assertEqual(video.linkding_to_video(self.cfg(), linkding), (0, 1))
+    self.assertEqual(self.inbox("videos"), ["V-4.json"])
+    self.assertEqual(linkding.tags(4), ["talks", "transcribed"])
+
+  def test_a_malformed_bookmark_does_not_hold_up_the_rest(self):
+    linkding = FakeLinkding(
+      [
+        {"id": 4, "title": "V", "tag_names": ["tolisten"]},
+        {"id": 5, "url": "https://youtu.be/y", "title": "W", "tag_names": ["tolisten"]},
+      ]
+    )
+
+    self.assertEqual(video.linkding_to_video(self.cfg(), linkding), (1, 2))
+    self.assertEqual(self.inbox("videos"), ["W-5.json"])
+    self.assertEqual(linkding.tags(4), ["tolisten"])
+    self.assertEqual(linkding.tags(5), ["transcribed"])
+    self.assertIn("linkding bookmark 4 failed", self.stderr.getvalue())
+
   def test_already_transcribed_video_is_only_retagged(self):
     (self.books / "readalouds/videos/V-4").mkdir(parents=True)
     linkding = FakeLinkding(
@@ -342,15 +432,18 @@ APPS = {
 
 
 class RunTest(HandoffTest):
-  def run_with(self, environ, linkding=None, readeck=None):
-    """run() with the apps NAME_URL configures replaced by the fakes."""
+  def fake_apps(self, linkding=None, readeck=None):
+    """Replaces the apps NAME_URL configures with the fakes."""
     real = App.from_env
 
     def from_env(env, name, scheme):
       app = real(env, name, scheme)
       return app and {"LINKDING": linkding, "READECK": readeck}[name]
 
-    with mock.patch.object(App, "from_env", side_effect=from_env):
+    return mock.patch.object(App, "from_env", side_effect=from_env)
+
+  def run_with(self, environ, linkding=None, readeck=None):
+    with self.fake_apps(linkding, readeck):
       return cli.run({**self.environ, **environ})
 
   def test_one_app_down_does_not_hold_up_the_others(self):
@@ -360,9 +453,33 @@ class RunTest(HandoffTest):
     errors = self.run_with(APPS, linkding, readeck)
 
     self.assertEqual(
-      errors, ["linkding to Readeck: linkding is down", "linkding to video: linkding is down"]
+      errors,
+      [
+        "linkding to Readeck: ConnectionRefusedError: linkding is down",
+        "linkding to video: ConnectionRefusedError: linkding is down",
+      ],
     )
     self.assertEqual(readeck.labels("abc"), ["narrated"])
+
+  def test_an_unexpected_error_fails_its_job_only(self):
+    class Malformed(FakeLinkding):
+      def request(self, method, path, body=None, raw=False):
+        return {}
+
+    readeck = FakeReadeck([{"id": "abc", "title": "T", "labels": ["listen"]}])
+    environ = {**self.environ, **APPS}
+
+    with (
+      self.fake_apps(Malformed([]), readeck),
+      mock.patch.dict(cli.os.environ, environ, clear=True),
+    ):
+      self.assertEqual(cli.main([]), 1)
+
+    self.assertEqual(readeck.labels("abc"), ["narrated"])
+    stderr = self.stderr.getvalue()
+    self.assertIn("error: linkding to Readeck: KeyError: 'results'", stderr)
+    self.assertIn("error: linkding to video: KeyError: 'results'", stderr)
+    self.assertIn("Traceback", stderr)
 
   def test_failures_are_counted_per_job(self):
     linkding = FakeLinkding([{"id": 1, "url": "https://a.example/1", "tag_names": ["toread"]}])

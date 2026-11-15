@@ -2,8 +2,19 @@
 
 import json
 
-from .app import tagged
-from .util import log, slug, warn
+from .app import tagged, tags_without
+from .util import hand_off_each, log, slug, warn
+
+
+def lang_tag_case(tag):
+  """TAG in BCP 47's case: lowercase language, uppercase region, title-case script, so
+  pt-br becomes pt-BR, the key YouTube lists its captions under. Only the case changes:
+  standardizing would also rewrite codes like iw, which YouTube still uses for Hebrew."""
+  lang, *subtags = tag.split("-")
+  return "-".join(
+    [lang.lower()]
+    + [s.upper() if len(s) == 2 else s.title() if len(s) == 4 else s.lower() for s in subtags]
+  )
 
 
 def linkding_to_video(cfg, linkding):
@@ -14,12 +25,11 @@ def linkding_to_video(cfg, linkding):
     return 0, 0
   bookmarks = tagged(linkding, cfg.tolisten_tag)
 
-  failed = 0
-  for bookmark in bookmarks:
+  def hand_off(bookmark):
     ld_id, link = bookmark["id"], bookmark["url"]
     title = bookmark.get("title") or bookmark.get("website_title") or ""
     name = slug({"title": title, "id": ld_id})
-    tags = [t for t in bookmark["tag_names"] if t != cfg.tolisten_tag]
+    tags = tags_without(bookmark, cfg.tolisten_tag)
     # Already queued, transcribed or failed by an earlier run whose retag failed.
     done = [
       video_inbox / f"{name}.json",
@@ -31,7 +41,11 @@ def linkding_to_video(cfg, linkding):
     else:
       request = {"url": link, "title": title, "linkding_id": ld_id}
       lang = next(
-        (t.split(":", 1)[1].lower() for t in tags if t.lower().startswith("lang:") and len(t) > 5),
+        (
+          lang_tag_case(t.split(":", 1)[1])
+          for t in tags
+          if t.lower().startswith("lang:") and len(t) > 5
+        ),
         None,
       )
       if lang:
@@ -45,15 +59,15 @@ def linkding_to_video(cfg, linkding):
       except OSError as e:
         tmp.unlink(missing_ok=True)
         warn(f"queueing {link} (linkding {ld_id}) failed: {e}; left tagged {cfg.tolisten_tag}")
-        failed += 1
-        continue
+        return False
     try:
       linkding.request(
         "PATCH", f"/api/bookmarks/{ld_id}/", {"tag_names": tags + [cfg.transcribed_tag]}
       )
     except OSError as e:
       warn(f"{name} is queued, but retagging linkding {ld_id} failed: {e}; the next run retries it")
-      failed += 1
-      continue
+      return False
     log(f"queued {name} for transcription")
-  return failed, len(bookmarks)
+    return True
+
+  return hand_off_each(bookmarks, "linkding bookmark", hand_off)

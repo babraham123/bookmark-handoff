@@ -1,7 +1,7 @@
 # The linkding to Readeck handoff, and the state that keeps a retry from saving twice.
 
-from .app import tagged
-from .util import log, warn
+from .app import tagged, tags_without
+from .util import hand_off_each, log, warn
 
 
 def linkding_to_readeck(cfg, linkding, readeck):
@@ -13,10 +13,10 @@ def linkding_to_readeck(cfg, linkding, readeck):
   sent = cfg.state_dir / "sent"
   sent.touch()
   done = set(sent.read_text().split())
-  failed = 0
-  for bookmark in bookmarks:
+
+  def hand_off(bookmark):
     ld_id, link = str(bookmark["id"]), bookmark["url"]
-    tags = [t for t in bookmark["tag_names"] if t != cfg.toread_tag]
+    tags = tags_without(bookmark, cfg.toread_tag)
     if ld_id in done:
       log(f"{link} (linkding {ld_id}) is already in Readeck; retagging only")
     else:
@@ -27,8 +27,7 @@ def linkding_to_readeck(cfg, linkding, readeck):
         readeck.request("POST", "/api/bookmarks", body)
       except OSError as e:
         warn(f"Readeck refused {link} (linkding {ld_id}): {e}; left tagged {cfg.toread_tag}")
-        failed += 1
-        continue
+        return False
       with sent.open("a") as f:
         f.write(f"{ld_id}\n")
     try:
@@ -37,7 +36,8 @@ def linkding_to_readeck(cfg, linkding, readeck):
       warn(
         f"{link} is in Readeck, but retagging linkding {ld_id} failed: {e}; the next run retries it"
       )
-      failed += 1
-      continue
+      return False
     log(f"handed off {link} (linkding {ld_id})")
-  return failed, len(bookmarks)
+    return True
+
+  return hand_off_each(bookmarks, "linkding bookmark", hand_off)

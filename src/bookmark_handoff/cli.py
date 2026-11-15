@@ -10,7 +10,7 @@ from .app import App
 from .config import Config, ConfigError
 from .narrate import readeck_to_narrate
 from .toread import linkding_to_readeck
-from .util import log
+from .util import log, warn_exception
 from .video import linkding_to_video
 
 
@@ -29,15 +29,17 @@ def run(environ):
     ("linkding to video", (linkding,), lambda: linkding_to_video(cfg, linkding)),
   ]
   errors = []
-  # Each job runs whatever the others did: one app being down shouldn't hold up the rest.
+  # Each job runs whatever the others did: one app being down, or answering with something
+  # unexpected, shouldn't hold up the rest.
   for job, apps, handoff in jobs:
     if None in apps:
       log(f"{job}: skipped, its apps aren't all configured")
       continue
     try:
       failed, total = handoff()
-    except OSError as e:
-      errors.append(f"{job}: {e}")
+    except Exception as e:
+      warn_exception(f"{job} failed")
+      errors.append(f"{job}: {type(e).__name__}: {e}")
       continue
     if failed:
       errors.append(f"{job}: {failed} of {total} failed")

@@ -5,7 +5,7 @@ import urllib.parse
 
 import langcodes
 
-from .util import log, slug, warn
+from .util import hand_off_each, log, slug, warn
 
 # Chatterbox Multilingual's languages, the TTS behind Calliope; anything else is read
 # as English. Ref: https://github.com/resemble-ai/chatterbox
@@ -64,8 +64,7 @@ def readeck_to_narrate(cfg, readeck):
     if len(page) < limit:
       break
 
-  failed = 0
-  for article in articles:
+  def hand_off(article):
     name, rd_id = slug(article), article["id"]
     # Already queued, narrated or failed by an earlier run whose relabel failed.
     done = [
@@ -87,8 +86,7 @@ def readeck_to_narrate(cfg, readeck):
         warn(
           f"exporting {rd_id} ({article.get('title')}) failed: {e}; left labelled {cfg.listen_label}"
         )
-        failed += 1
-        continue
+        return False
       spec.write_text(
         json.dumps(
           {"lang": narration_lang(article.get("lang")), "collection": cfg.narrate_collection}
@@ -104,7 +102,8 @@ def readeck_to_narrate(cfg, readeck):
       )
     except OSError as e:
       warn(f"{name} is queued, but relabelling {rd_id} failed: {e}; the next run retries it")
-      failed += 1
-      continue
+      return False
     log(f"queued {name} for narration")
-  return failed, len(articles)
+    return True
+
+  return hand_off_each(articles, "Readeck article", hand_off)
